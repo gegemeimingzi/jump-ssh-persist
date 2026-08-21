@@ -32,3 +32,6 @@ timeout 60 ssh -tt \
   -o StrictHostKeyChecking=no -o ConnectTimeout=20 -o NumberOfPasswordPrompts=1 \
   -o PreferredAuthentications=password -o PubkeyAuthentication=no -o ControlMaster=no \
   -J "$JUMP" "$TARGET_HOST" "$CMD" < /dev/null
+rc=$?
+rm -f "$ASK"   # 删除临时 askpass（防密码残留）
+exit $rc

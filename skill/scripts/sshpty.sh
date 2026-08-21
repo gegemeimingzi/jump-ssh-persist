@@ -56,11 +56,11 @@ echo "$TARGET_PASS"
 EOF
 chmod +x "$ASK"
 
-# 退出时：杀掉 ssh 子进程、FIFO keep-open、心跳，并移除 PID 文件
+# 退出时：杀掉 ssh 子进程、FIFO keep-open、心跳，移除 PID 文件与 askpass（防密码残留）
 cleanup() {
   [ "$SSHPID" != "0" ] && kill "$SSHPID" 2>/dev/null
   kill $KEEP $KEEPALIVE 2>/dev/null
-  rm -f "$PIDFILE"
+  rm -f "$PIDFILE" "$ASK"
 }
 trap cleanup EXIT
 
