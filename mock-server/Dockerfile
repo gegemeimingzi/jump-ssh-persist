@@ -1,7 +1,7 @@
 # 本地 GoAnywhere 行为模拟器：跳板 + 目标机双 sshd，同一容器，两个端口。
 # 用途：不依赖真实比赛服务器即可端到端验证 jump-ssh-persist skill。
 #   - 2222 = "跳板"（模拟 GoAnywhere：先认证再转发）
-#   - 2223 = "目标机"（模拟 root@199.103.53.195）
+#   - 2223 = "目标机"（模拟 root@目标机IP）
 # 凭据：用户 root，密码 mockpass（token 置为 root 即模拟有效 token；
 #       token 置为其它用户即模拟 token 失效 → Permission denied）。
 FROM alpine:3.20
