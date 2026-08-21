@@ -1,0 +1,45 @@
+{
+  "skill_name": "jump-ssh-persist",
+  "evals": [
+    {
+      "id": 1,
+      "name": "persistent-connect-exec",
+      "prompt": "帮我连接服务器并保持常驻连接。跳板 127.0.0.1:2222（token 就是跳板用户名 root），目标机 root@127.0.0.1，目标机密码 mockpass。连接后先执行 hostname，然后通过同一条保持的连接再执行 whoami，两条命令都要返回真实输出。\n\n重要：本评测使用隔离环境，请先 mkdir -p /tmp/eval1-home /tmp/eval1-ws，然后让 HOME=/tmp/eval1-home、SSH_WS=/tmp/eval1-ws（环境变量要贯穿所有 sshpty/sshsend 调用），所有配置/脚本/运行都只在这套隔离目录下进行。",
+      "expected_output": "解析凭据→写 config/token→部署脚本→启动常驻会话→hostname 返回真实输出→同一会话 whoami 返回 root→会话保持",
+      "assertions": [
+        {"text": "凭据解析正确（跳板 127.0.0.1:2222，目标 root@127.0.0.1，密码 mockpass）", "passed": false},
+        {"text": "在隔离 HOME 写入 config 与 token 文件（权限 600）", "passed": false},
+        {"text": "部署 sshpty.sh/sshsend.sh/ssht.sh 到 ~/.jump-ssh/bin/", "passed": false},
+        {"text": "建连成功，hostname 返回非空真实输出", "passed": false},
+        {"text": "同一保持连接执行第二条命令 whoami 返回 root", "passed": false},
+        {"text": "会话保持（PID 文件存在且进程存活，未重复启动）", "passed": false}
+      ],
+      "files": []
+    },
+    {
+      "id": 2,
+      "name": "first-time-config",
+      "prompt": "首次使用这个 skill，帮我配置并连接服务器。跳板 127.0.0.1:2222，目标机 root@127.0.0.1，目标机密码 mockpass，token 我待会发给你。\n\n重要：本评测使用隔离环境，请先 mkdir -p /tmp/eval2-home /tmp/eval2-ws，然后让 HOME=/tmp/eval2-home、SSH_WS=/tmp/eval2-ws（环境变量要贯穿所有 sshpty/sshsend 调用），所有配置/脚本/运行都只在这套隔离目录下进行。",
+      "expected_output": "创建配置文件（600，不含 token）→部署脚本→明确提示 token 待提供，不提前瞎连",
+      "assertions": [
+        {"text": "创建配置文件 ~/.jump-ssh/config（权限 600，不含 token）", "passed": false},
+        {"text": "部署 sshpty.sh/sshsend.sh/ssht.sh 到 ~/.jump-ssh/bin/", "passed": false},
+        {"text": "明确提示 token 待提供后才能连接", "passed": false},
+        {"text": "token 缺失时不启动/不瞎连（无非法连接尝试）", "passed": false}
+      ],
+      "files": []
+    },
+    {
+      "id": 3,
+      "name": "dead-token-diagnosis",
+      "prompt": "帮我连接服务器。跳板 127.0.0.1:2222，目标机 root@127.0.0.1，目标机密码 mockpass，token 是 jt_dead:xxx。请连接并诊断这个 token 是否有效，给出处理建议。\n\n重要：本评测使用隔离环境，请先 mkdir -p /tmp/eval3-home /tmp/eval3-ws，然后让 HOME=/tmp/eval3-home、SSH_WS=/tmp/eval3-ws（环境变量要贯穿所有 sshpty/sshsend 调用），所有配置/脚本/运行都只在这套隔离目录下进行。",
+      "expected_output": "诊断出 token 无效（Permission denied → TOKEN_DEAD），请用户提供新 token，无无限重启",
+      "assertions": [
+        {"text": "正确诊断 token 无效（识别认证失败，而非网络问题）", "passed": false},
+        {"text": "明确请用户提供新 token", "passed": false},
+        {"text": "无无限重启（sshpty 已停止，未疯狂循环重连）", "passed": false}
+      ],
+      "files": []
+    }
+  ]
+}

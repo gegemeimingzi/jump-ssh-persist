@@ -1,0 +1,11 @@
+# 本地凭据目录（绝不提交）
+.jump-ssh/
+
+# 部署/运行残留
+bin/
+*.log
+*.zip
+
+# 系统 / 编辑器
+.DS_Store
+Thumbs.db
