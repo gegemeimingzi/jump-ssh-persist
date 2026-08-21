@@ -78,7 +78,7 @@ KEEPALIVE=$!
 
 restart_count=0
 max_fast_fails=8
-min_uptime=15   # 会话维持 >=15s 视为"曾连通"
+min_uptime=25   # 必须 > ConnectTimeout=20：20s 连接超时不视为"曾连通"，否则计数器被清零导致无限重试
 while true; do
   start=$(date +%s)
   restart_count=$((restart_count+1))
