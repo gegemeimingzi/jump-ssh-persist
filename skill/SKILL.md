@@ -24,7 +24,7 @@ compatibility: bash + ssh（OpenSSH 8+）。Windows 需 Git Bash/MSYS2（含 per
 └── bin/           # 部署的 sshpty.sh / sshsend.sh / ssht.sh
 ```
 
-- **为什么 token 单独放文件**：token 频繁更换（几小时/一次会话），而跳板/目标机长期不变。放独立文件后，换 token = `printf '%s' 'jt_xxx:yyy' > ~/.jump-ssh/token` + 重启 sshpty，不用改任何脚本。config 保持不变。
+- **为什么 token 单独放文件**：token 频繁更换（几小时/一次会话），而跳板/目标机长期不变。放独立文件后，换 token = `printf '%s' 'jt_xxx:yyy' > ~/.jump-ssh/token`，**sshpty 每次重连前自动重读 token 文件，无需重启脚本**。config 保持不变。
 - **为什么脚本读 config 而非内置**：改跳板/目标机只需编辑 config，脚本自动生效。
 
 ## 完整流程（拿到 token 后 ≤1 分钟连通）
@@ -94,13 +94,16 @@ TARGET_PASS=<你的密码>
 
 ### Step 4 — 启动常驻会话（≤1 分钟内连通）
 
+**⚠️ 关键（Claude Code / 类似代理环境）**：不要用 `nohup ... &` 启动！Bash 工具每次调用是独立 shell，调用结束时其子进程（包括 nohup 启动的）会被**连带杀掉**——表现为"连接坚持 10-30 分钟后莫名断掉"。必须用 **Bash 工具的 `run_in_background: true`** 启动，让 sshpty 由代理的任务系统管理，跨调用存活：
+
 ```bash
 # 停旧会话：优先按 PID 文件杀（Windows 上 pkill -f 不可靠，可能杀不干净）
 [ -f /tmp/ssh_pty_pid ] && kill "$(cat /tmp/ssh_pty_pid)" 2>/dev/null
 pkill -f "ssh -tt" 2>/dev/null; sleep 1
-rm -f /tmp/ssh_in /tmp/ssh_out
+rm -f /tmp/ssh_in /tmp/ssh_out /tmp/ssh_pty_status
 
-nohup bash ~/.jump-ssh/bin/sshpty.sh > /tmp/sshpty.log 2>&1 &
+# 启动（用 run_in_background: true，不是 nohup &）
+bash ~/.jump-ssh/bin/sshpty.sh
 ```
 
 sshpty.sh 内部也会自清理：启动时若 PID 文件存在且进程存活，先停掉旧实例（防止重复会话互相抢 FIFO）。
@@ -137,14 +140,17 @@ bash ~/.jump-ssh/bin/sshsend.sh "./run_eval.sh rts" 200
 ### Step 6 — token 过期处理
 
 - 现象：`sshsend.sh` 报「写入超时」或「常驻会话已停止（TOKEN_DEAD / CONNECT_FAILED）」。
-- 处理：**已建立的连接不受影响**（心跳保持）；只有**断线重连**才需要新 token。若已断线，提示用户提供新 token，覆写 `~/.jump-ssh/token` 后回 Step 4。
+- **新逻辑（v2）**：sshpty **不会因 token 过期退出**——检测到 TOKEN_DEAD 后进入「等待新 token」循环，每 5s 检测 token 文件；覆写 `~/.jump-ssh/token` 即自动用新 token 重连，**无需重启 sshpty**。
+- 处理：提示用户提供新 token，`printf '%s' 'jt_xxx:yyy' > ~/.jump-ssh/token` 即可，等几秒自动重连（观察 `/tmp/ssh_pty_status` 出现新的 `starting` 行即成功）。
 
 ## 关键脚本说明
 
 - 工作区默认 `/tmp`（FIFO/LOG/状态/PID 都在 `/tmp`）。同一机器多实例/测试隔离时，可用环境变量 `SSH_WS=/tmp/xxx` 覆盖（sshpty/sshsend/ssht 三个脚本都尊重它）。
 
 - `sshpty.sh`：常驻会话。`-tt` PTY + FIFO stdin + LOG 落盘 + 20s 心跳 + 自动重连 + PID 文件自清理。
-  - **失败分级检测**：`Permission denied` / `platform authorization denied` / `stdio forwarding failed` / `Access denied` 等强认证失败签名 → 立即 `TOKEN_DEAD` 停止。`Connection closed by UNKNOWN port 65535` / `closed by remote host` 等模糊签名（网络故障也会出现）→ 不误判，靠**重启上限**兜底：连续 8 次快速失败（每次 <15s）才 `CONNECT_FAILED` 停止。
+  - **每次重连前重读 token 文件**：换 token 只需覆写 `~/.jump-ssh/token`，sshpty 自动用新 token 重连（无需重启脚本）。
+  - **FIFO 写端保持**：用 `while true; do sleep 3600; done > FIFO` 而非 `tail -f /dev/null`（后者在 MSYS2 某些版本会提前退出 → FIFO 无写端 → ssh 读 EOF → 断连）。
+  - **失败分级处理（v2）**：`Permission denied` / `platform authorization denied` / `stdio forwarding failed` / `Access denied` 等强认证失败签名 → 进入「等待新 token」循环（每 5s 检测 token 文件，覆写即自动重连），**不退出**。模糊签名（网络故障）→ 正常重连；连续 8 次快速失败 → 同样进入等待循环。
 - `sshsend.sh`：发命令/回读。marker 机制（`>>M<< ... <<M>>`），自动清洗 PTY 转义/提示符，默认等 60s。写超时时读 `/tmp/ssh_pty_status` 给出明确诊断。
 - `ssht.sh`：单次连接备用（应急/探测，带 `-tt`）。
 
@@ -152,7 +158,7 @@ bash ~/.jump-ssh/bin/sshsend.sh "./run_eval.sh rts" 200
 
 | 平台 | 注意 |
 |---|---|
-| Windows Git Bash (MSYS2) | **禁 `setsid`、禁 `ControlMaster`**（否则 askpass 回读挂起）。`pkill -f` 不可靠，用 PID 文件停会话。路径用 `/tmp`。 |
+| Windows Git Bash (MSYS2) | **禁 `setsid`、禁 `ControlMaster`**（否则 askpass 回读挂起）。`pkill -f` 不可靠，用 PID 文件停会话。路径用 `/tmp`。**`nohup &` 启动的后台进程会在 Bash 工具调用结束时被杀**——必须用 `run_in_background: true` 启动 sshpty。 |
 | macOS | 原生 OpenSSH；`SSH_ASKPASS_REQUIRE=force` 新版可用。无 MSYS2 禁项。 |
 | Linux | 原生 OpenSSH；直接可用。 |
 
@@ -164,8 +170,8 @@ bash ~/.jump-ssh/bin/sshsend.sh "./run_eval.sh rts" 200
 |---|---|---|
 | `platform authorization denied` / `stdio forwarding failed` | 非 PTY 连接被拒或 token 死 | 命令模式加 `-tt`；传输走 base64 分块；token 死则换 token |
 | `Permission denied`（target 认证） | 密码错 / token 死 | 核对 config 密码；换新 token |
-| `TOKEN_DEAD` / 写入超时 | token 过期 | 换新 token（Step 1/3） |
-| `CONNECT_FAILED`（8x fast） | token 死或网络不通（模糊签名） | 检查 token/网络，重发 token |
+| `TOKEN_DEAD` / 写入超时 | token 过期 | 覆写 `~/.jump-ssh/token`，sshpty 自动重连（无需重启） |
+| `CONNECT_FAILED`（8x fast） | token 死或网络不通（模糊签名） | 检查 token/网络，覆写 token 后自动重试 |
 | `Host key verification failed` | 跳板/目标机 key 变更（如 mock 重建） | `ssh-keygen -R <host>:<port>` 清旧 key |
 | 连上但命令无输出 | marker 超时 | `sshsend.sh "cmd" 300` 加长等待 |
 | 服务器任务被断线影响 | 任务挂在 PTY | 服务器端 `nohup ... &` |
